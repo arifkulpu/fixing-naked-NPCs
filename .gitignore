@@ -1,0 +1,30 @@
+# Build directories
+build/
+bin/
+obj/
+out/
+x64/
+
+# vcpkg
+vcpkg_installed/
+
+# IDE files
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.filters
+
+# AI / System files
+.gemini/
+.idea/
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+NPCFixer.log

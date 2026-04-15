@@ -1,0 +1,9 @@
+{
+  "name": "naked-npc-fix",
+  "version": "1.0.0",
+  "dependencies": [
+    "commonlibsse-ng",
+    "spdlog"
+  ],
+  "builtin-baseline": "d7b75fa8a30478ae5b5eb86ac730f851ef036875"
+}
