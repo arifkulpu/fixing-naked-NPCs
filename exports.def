@@ -1,0 +1,5 @@
+LIBRARY "NPCOutfitFixer"
+EXPORTS
+SKSEPlugin_Version
+SKSEPlugin_Query
+SKSEPlugin_Load
