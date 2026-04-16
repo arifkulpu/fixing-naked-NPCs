@@ -1,69 +1,84 @@
 #include "PCH.h"
 #include "VisibilityFixer.h"
 
-#include <map>
+#include <unordered_set>
+#include <vector>
 #include <chrono>
 
 using namespace std::chrono_literals;
 
 namespace VisibilityFixer
 {
-    // Fix tipleri
-    enum class FixType
+    // Bekleyen düzeltme işlemleri için yapı (Performans için kademeli işleme)
+    struct PendingFix
     {
-        kInvisible,
-        kNaked,
-        kHeadless
+        RE::ObjectRefHandle actorHandle;
+        std::chrono::steady_clock::time_point fixTime;
     };
 
-    // FormID -> (FixType -> Son Fix Zamanı)
-    std::map<RE::FormID, std::map<FixType, std::chrono::steady_clock::time_point>> fixCooldowns;
+    // Aktör bazlı son fix zamanları (Performansı korumak ama hatalı fixleri tekrar denemek için 60sn cooldown)
+    std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> actorFixTimestamps;
+    
+    // İşlem kuyruğu (Spam engelleme ve performans için)
+    std::vector<PendingFix> pendingFixQueue;
 
-    void FixActor(RE::Actor* actor, std::chrono::steady_clock::time_point now, bool a_force)
+    // Oyun başlangıç zamanı (Yeni oyun/yükleme sonrası stabilizasyon için)
+    std::chrono::steady_clock::time_point systemStartTime = std::chrono::steady_clock::now();
+
+    void ClearFixedActors()
     {
-        if (!actor || actor->IsPlayerRef()) return;
-        if (actor->IsDisabled() || actor->IsDead()) return;
+        actorFixTimestamps.clear();
+        pendingFixQueue.clear();
+        systemStartTime = std::chrono::steady_clock::now(); // Zamanlayıcıyı sıfırla
+        logger::info("VisibilityFixer: Fix listesi ve baslangic zamanlayicisi sifirlandi.");
+    }
 
-        auto formID = actor->GetFormID();
-
-        // --- GÖRÜNMEZLİK (GHOST) KONTROLÜ ---
-        if (actor->Is3DLoaded() && actor->Get3D() == nullptr) {
-            auto& lastFix = fixCooldowns[formID][FixType::kInvisible];
-            if (a_force || now - lastFix > 10s) {
-                logger::info("[Görünmezlik] {} ({:08X}) tespit edildi. Yenileniyor...", actor->GetName(), formID);
-                actor->formFlags &= ~RE::TESForm::RecordFlags::kDisabled;
-                actor->Update3DModel();
-                fixCooldowns[formID][FixType::kInvisible] = now;
-                return;
-            }
-        }
-
-        // 3D yüklü değilse diğer kontrollere gerek yok
-        auto root = actor->Get3D();
-        if (!root) return;
-
-        // --- ÇIPLAKLIK (NAKED) KONTROLÜ ---
-        auto race = actor->GetRace();
-        bool isNPC = race && race->HasKeywordString("ActorTypeNPC");
+    void ProcessActorFix(RE::Actor* actor)
+    {
+        if (!actor) return;
         
-        if (isNPC) {
-            // Göğüs zırhı/kıyafeti var mı? (Slot 32)
-            auto chestArmor = actor->GetWornArmor(RE::BIPED_MODEL::BipedObjectSlot::kBody);
-            if (!chestArmor) {
-                auto& lastFix = fixCooldowns[formID][FixType::kNaked];
-                if (a_force || now - lastFix > 30s) {
-                    logger::info("[Çıplaklık] {} ({:08X}) zırhsız tespit edildi. Analiz ediliyor...", actor->GetName(), formID);
-                    
-                    bool fixed = false;
-                    auto npcBase = actor->GetActorBase();
+        auto formID = actor->GetFormID();
+        auto root = actor->Get3D();
+        
+        logger::info("[Düzeltme] {} ({:08X}) analizi basladi...", actor->GetName(), formID);
 
-                    // 1. Durum: Envanterinde kıyafet var mı ama giymiyor mu?
+        bool fixed = false;
+
+        // 1. Görünmezlik (Ghost / Görünmez Ceset) Düzeltmesi
+        if (!root) {
+            if (actor->IsDead()) {
+                logger::info(" -> Görünmez Ceset (Ghost Corpse) tespit edildi. Load3D zorlanıyor...");
+            } else {
+                logger::info(" -> Görünmezlik (Ghost) tespit edildi. Load3D zorlanıyor...");
+            }
+            
+            // kDisabled ve kInitiallyDisabled flag'lerini temizle (Flicker engelleme)
+            actor->formFlags &= ~RE::TESForm::RecordFlags::kDisabled;
+            actor->formFlags &= ~RE::TESObjectREFR::RecordFlags::kInitiallyDisabled;
+            
+            // Motoru modeli yeniden yüklemeye zorla
+            actor->Load3D(false);
+            
+            fixed = true;
+        } 
+        // 2. Çıplaklık ve Kıyafet Düzeltmesi
+        else {
+            auto race = actor->GetRace();
+            bool isNPC = race && race->HasKeywordString("ActorTypeNPC");
+            
+            if (isNPC) {
+                // Vücut zırhı var mı?
+                auto chestArmor = actor->GetWornArmor(RE::BIPED_MODEL::BipedObjectSlot::kBody);
+                if (!chestArmor) {
+                    logger::info(" -> Çıplaklık tespit edildi. Envanter taranıyor...");
+                    
+                    // Envanterde vücut zırhı var mı bak
                     auto inv = actor->GetInventory();
                     for (auto& [item, data] : inv) {
                         if (item && item->IsArmor()) {
                             auto armor = item->As<RE::TESObjectARMO>();
                             if (armor && armor->HasPartOf(RE::BIPED_MODEL::BipedObjectSlot::kBody)) {
-                                logger::info(" -> Envanterde vücut zırhı bulundu: {}. Giydiriliyor...", armor->GetName());
+                                logger::info(" -> Envanterde zırh bulundu: {}. Giydiriliyor...", armor->GetName());
                                 actor->AddWornItem(armor, 1, true, 0, 0);
                                 fixed = true;
                                 break;
@@ -71,43 +86,105 @@ namespace VisibilityFixer
                         }
                     }
 
-                    // 2. Durum: Outfit tanımlı mı?
-                    if (!fixed && npcBase) {
-                        auto outfit = npcBase->defaultOutfit;
-                        if (!outfit) outfit = npcBase->sleepOutfit;
-
-                        if (outfit) {
-                            logger::info(" -> Outfit tanimli ({}). Envanter sifirlaniyor...", outfit->GetName());
+                    // Envanterde yoksa Outfit'i sıfırla
+                    if (!fixed) {
+                        auto npcBase = actor->GetActorBase();
+                        if (npcBase && (npcBase->defaultOutfit || npcBase->sleepOutfit)) {
+                            logger::info(" -> Outfit tanımlı. Envanter sıfırlanarak kıyafetler zorlanıyor...");
                             actor->ResetInventory(false);
                             fixed = true;
                         }
                     }
+                }
 
-                    if (fixed) {
-                        actor->Update3DModel(); // Görsel yenilemeyi zorla
-                        fixCooldowns[formID][FixType::kNaked] = now;
-                    } else {
-                        logger::info(" -> Atlandi: Gecerli outfit veya envanterde kiyafet bulunamadi.");
+                // Başsızlık kontrolü
+                if (!root->GetObjectByName("FaceGenNiNode")) {
+                    logger::info(" -> Başsızlık düzeltiliyor...");
+                    fixed = true;
+                }
+            }
+        }
+
+        if (fixed) {
+            actor->Update3DModel();
+            actor->UpdateAnimation(0.0f); // Animasyon sistemini tetikleyerek görünürlüğü garanti altına al
+            logger::info(" -> Düzeltme işlemi tamamlandı.");
+        } else {
+            logger::info(" -> Düzeltme gerekmedi veya yapılamadı.");
+        }
+    }
+
+    void FixActor(RE::Actor* actor, std::chrono::steady_clock::time_point now, bool a_force)
+    {
+        if (!actor || actor->IsPlayerRef()) return;
+        if (actor->IsDisabled()) return; // Sadece tamamen devredışı kalanları atla, ölüleri (cesetleri) atlama
+        
+        // 3D yüklü değilse işlem yapma (3D check doğru yap kuralı)
+        if (!actor->Is3DLoaded()) return;
+
+        auto formID = actor->GetFormID();
+
+        // 60 saniyelik bekleme süresi kontrolü (Performans ve tekrar deneme dengesi)
+        auto it = actorFixTimestamps.find(formID);
+        if (!a_force && it != actorFixTimestamps.end()) {
+            if (now - it->second < 60s) {
+                return;
+            }
+        }
+
+        bool needsFix = false;
+
+        // --- GÖRÜNMEZLİK (GHOST) KONTROLÜ ---
+        if (actor->Get3D() == nullptr) {
+            logger::info("[Görünmezlik] {} ({:08X}) tespit edildi.", actor->GetName(), formID);
+            needsFix = true;
+        }
+
+        // --- ÇIPLAKLIK VE BAŞSIKLIK KONTROLLERİ ---
+        if (!needsFix) {
+            auto root = actor->Get3D();
+            if (root) {
+                // Başsızlık kontrolü
+                if (!root->GetObjectByName("FaceGenNiNode")) {
+                    logger::info("[Başsızlık] {} ({:08X}) tespit edildi.", actor->GetName(), formID);
+                    needsFix = true;
+                }
+                
+                // Çıplaklık kontrolü (NPC ise)
+                if (!needsFix) {
+                    auto race = actor->GetRace();
+                    if (race && race->HasKeywordString("ActorTypeNPC")) {
+                        auto chestArmor = actor->GetWornArmor(RE::BIPED_MODEL::BipedObjectSlot::kBody);
+                        if (!chestArmor) {
+                            logger::info("[Çıplaklık] {} ({:08X}) tespit edildi.", actor->GetName(), formID);
+                            needsFix = true;
+                        }
                     }
                 }
             }
+        }
 
-            // --- BAŞSIZLIK (HEADLESS) KONTROLÜ ---
-            auto faceNode = root->GetObjectByName("FaceGenNiNode");
-            if (!faceNode) {
-                auto& lastFix = fixCooldowns[formID][FixType::kHeadless];
-                if (a_force || now - lastFix > 20s) {
-                    logger::info("[Başsızlık] {} ({:08X}) kafa modeli eksik! Yenileniyor...", actor->GetName(), formID);
-                    actor->Update3DModel();
-                    fixCooldowns[formID][FixType::kHeadless] = now;
-                    return;
-                }
-            }
+        if (needsFix) {
+            // Kuyruğa ekle (Aynı frame içinde spam engelleme ve 0.2s bekleme kuralı)
+            PendingFix pending;
+            pending.actorHandle = actor->GetHandle();
+            pending.fixTime = now + 200ms;
+            
+            pendingFixQueue.push_back(pending);
+            actorFixTimestamps[formID] = now; // Fix zamanını kaydet
+            
+            logger::info(" -> Aktör kuyruğa eklendi, 0.2s sonra düzeltilecek.");
         }
     }
 
     void ProcessFixes(bool a_force)
     {
+        // Menü veya yükleme ekranındaysak işlem yapma (Cell load koruması)
+        auto ui = RE::UI::GetSingleton();
+        if (ui && ui->GameIsPaused()) {
+            return;
+        }
+
         auto processLists = RE::ProcessLists::GetSingleton();
         if (!processLists) return;
 
@@ -119,35 +196,44 @@ namespace VisibilityFixer
                 FixActor(actor.get(), now, a_force);
             }
         }
+    }
 
-        // Temizlik her 5 dk'da bir (a_force ise temizlik yapma)
-        if (!a_force) {
-            static auto lastCleanup = now;
-            if (now - lastCleanup > 5min) {
-                for (auto it = fixCooldowns.begin(); it != fixCooldowns.end(); ) {
-                    bool allExpired = true;
-                    for (auto& [type, time] : it->second) {
-                        if (now - time < 5min) {
-                            allExpired = false;
-                            break;
-                        }
-                    }
-                    if (allExpired) it = fixCooldowns.erase(it);
-                    else ++it;
+    void ProcessQueue(std::chrono::steady_clock::time_point now)
+    {
+        if (pendingFixQueue.empty()) return;
+
+        for (auto it = pendingFixQueue.begin(); it != pendingFixQueue.end(); ) {
+            auto ref = it->actorHandle.get();
+            if (ref && now >= it->fixTime) {
+                auto actor = ref->As<RE::Actor>();
+                if (actor) {
+                    ProcessActorFix(actor);
                 }
-                lastCleanup = now;
+                it = pendingFixQueue.erase(it);
+            } else if (!ref) {
+                it = pendingFixQueue.erase(it);
+            } else {
+                ++it;
             }
         }
     }
 
     void Update()
     {
-        static auto lastUpdate = std::chrono::steady_clock::now();
         auto now = std::chrono::steady_clock::now();
+        
+        // Stabilizasyon için ilk 10 saniye işlem yapma (Yeni oyun/Load sonrası)
+        if (now - systemStartTime < 10s) {
+            return;
+        }
 
-        // Performans için 2 saniyede bir kontrol et
-        if (now - lastUpdate > 2s) {
-            ProcessFixes();
+        // Kuyruğu her karede işle
+        ProcessQueue(now);
+
+        static auto lastUpdate = now;
+        // 5 saniyede bir kontrol et (Update süresini büyüt kuralı)
+        if (now - lastUpdate > 5s) {
+            ProcessFixes(false);
             lastUpdate = now;
         }
     }

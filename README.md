@@ -7,12 +7,12 @@ An SKSE plugin for **Skyrim Anniversary Edition (1.6.1170)** that automatically 
 ### [English]
 
 #### Features
-- **Invisible NPC Fix**: Detects "ghost" NPCs (actors existing in the engine but not rendering) and forces their 3D models to reload.
+- **Invisible NPC & Corpse Fix**: Detects "ghost" NPCs (actors existing in the engine but not rendering) and forces their 3D models to reload. Now also works on **invisible dead bodies (Ghost Corpses)** by using robust `Load3D()` techniques.
 - **Naked NPC Fix**: Scans for actors missing body armor/clothing. It checks both the outfit system and the actor's inventory to automatically re-equip missing items.
 - **Headless NPC Fix**: Identifies actors with missing head models (FaceGen nodes) and refreshes them.
+- **Anti-Flicker Mechanism**: Resets initialization flags and animation states to prevent NPCs from constantly appearing and disappearing.
 - **Console Command**: Adds `fixnpcs` (or `fnp`) command to manually refresh all nearby actors without waiting for the auto-scan.
-- **High Performance**: Optimized loop running every 2 seconds on the main thread with a robust cooldown system to prevent performance impact.
-- **Stability**: Specifically designed to be compatible with `ConsoleUtilSSE` and other console-hooking mods.
+- **High Performance & Stability**: Optimized loop running every 5 seconds. Uses a **60-second cooldown per actor** to prevent engine spamming. Includes menu/loading screen protection and a game startup delay to ensure absolute stability. Compatible with `ConsoleUtilSSE`.
 
 #### Requirements
 - [SKSE64](https://skse.silverlock.org/)
@@ -29,12 +29,12 @@ An SKSE plugin for **Skyrim Anniversary Edition (1.6.1170)** that automatically 
 ### [Türkçe]
 
 #### Özellikler
-- **Görünmez NPC Düzeltmesi**: Motor üzerinde var olan ancak görseli yüklenmeyen (hayalet) NPC'leri tespit eder ve modellerini yeniler.
+- **Görünmez NPC ve Ceset Düzeltmesi**: Motor üzerinde var olan ancak görseli yüklenmeyen (hayalet) NPC'leri ve **görünmez cesetleri (Ghost Corpses)** tespit eder. `Load3D()` kullanarak modelleri zorla geri getirir.
 - **Çıplak NPC Düzeltmesi**: Vücut zırhı veya kıyafeti eksik olan NPC'leri tarar. Hem kıyafet seti (outfit) sistemini hem de NPC'nin envanterini kontrol ederek eksik eşyaları otomatik giydirir.
 - **Başsız NPC Düzeltmesi**: Kafa modeli (FaceGen) yüklenememiş aktörleri tespit eder ve 3D modellerini tazeler.
+- **Flicker (Kaybolma) Engelleme**: Başlangıç bayraklarını ve animasyon sistemini sıfırlayarak NPC'lerin saniyelik olarak görünüp tekrar kaybolmalarını önler.
 - **Konsol Komutu**: Otomatik taramayı beklemeden, konsola `fixnpcs` (veya `fnp`) yazarak yakındaki tüm aktörleri anında yenileyebilirsiniz.
-- **Yüksek Performans**: Ana thread üzerinde her 2 saniyede bir çalışan, performans dostu ve cooldown sistemli optimizasyon.
-- **Stabilite**: `ConsoleUtilSSE` ve diğer konsol modlarıyla tam uyumlu olacak şekilde geliştirilmiştir.
+- **Yüksek Performans ve Stabilite**: Döngü her 5 saniyede bir çalışır. Motoru yormamak için her aktör başına **60 saniyelik bekleme süresi (cooldown)** uygular. Menüdeyken veya yükleme ekranlarında duraklayarak çökmeleri önler. Yeni oyun/kayıt yükleme başlangıcında 10 sn stabilizasyon gecikmesi eklidir.
 
 #### Kurulum
 1. `NakedNPCFix.dll` dosyasını indirin.

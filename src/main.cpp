@@ -82,6 +82,10 @@ void OnMessage(SKSE::MessagingInterface::Message* a_msg) {
         VisibilityFixer::Install();
         Console::Register();
         break;
+    case SKSE::MessagingInterface::kPreLoadGame:
+    case SKSE::MessagingInterface::kNewGame:
+        VisibilityFixer::ClearFixedActors();
+        break;
     }
 }
 
