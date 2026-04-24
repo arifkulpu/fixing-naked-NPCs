@@ -1,0 +1,3 @@
+C:/Users/pc/Desktop/projeler/Codexprojeler/build-ninja/CMakeFiles/CMakeScratch/TryCompile-9nal44/CMakeFiles/cmTC_c19f0.dir
+C:/Users/pc/Desktop/projeler/Codexprojeler/build-ninja/CMakeFiles/CMakeScratch/TryCompile-9nal44/CMakeFiles/edit_cache.dir
+C:/Users/pc/Desktop/projeler/Codexprojeler/build-ninja/CMakeFiles/CMakeScratch/TryCompile-9nal44/CMakeFiles/rebuild_cache.dir
